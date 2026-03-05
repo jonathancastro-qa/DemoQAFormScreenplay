@@ -1,46 +1,125 @@
-name: Serenity BDD QA Pipeline
+name: Serenity BDD CI
 
 on:
+  push:
+    branches:
+      - qa
   pull_request:
     branches:
-      - qa # Ejecución automática al hacer Pull Request a la rama 'qa'
+      - qa
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
-  test:
+  build-and-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
-      - name: Checkout repository
+      # 1. Checkout del repositorio
+      - name: Checkout del repositorio
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      # 2. Configurar JDK 21
+      - name: Configurar JDK 21
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
-          distribution: 'temurin'
+          distribution: temurin
+          java-version: 21
+          cache: maven
 
-      - name: Cache Maven packages
-        uses: actions/cache@v4
+      # 3. Instalar Chrome estable
+      - name: Instalar Chrome
+        uses: browser-actions/setup-chrome@v1
+        id: setup-chrome
         with:
-          path: ~/.m2
-          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
-          restore-keys: ${{ runner.os }}-m2
+          chrome-version: stable
 
-      # 1. Ejecuta las pruebas (sin generar el reporte consolidado)
-      - name: Run Serenity Tests
-        run: mvn clean verify -DskipTests=false
-        timeout-minutes: 5
+      # 4. Instalar ChromeDriver de la misma version que Chrome
+      - name: Instalar ChromeDriver compatible
+        run: |
+          sudo apt-get install -y xvfb
 
-      # 2. **Paso Añadido/Modificado:** Genera el reporte HTML final de Serenity
-      - name: Generate Serenity Report
-        run: mvn serenity:aggregate
-        # Opcional: Puedes añadir 'if: always()' aquí si quieres que se genere el reporte
-        # incluso si las pruebas fallan (para ver los resultados parciales).
+          # Obtener version exacta de Chrome instalado
+          CHROME_VERSION=$("${{ steps.setup-chrome.outputs.chrome-path }}" --version | grep -oP '\d+\.\d+\.\d+\.\d+')
+          echo "Chrome version detectada: $CHROME_VERSION"
 
-      # 3. Sube el reporte como artefacto
-      - name: Upload Serenity Report
+          # Descargar ChromeDriver de la misma version
+          CHROMEDRIVER_URL="https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chromedriver-linux64.zip"
+          echo "Descargando ChromeDriver desde: $CHROMEDRIVER_URL"
+
+          wget -q "$CHROMEDRIVER_URL" -O chromedriver.zip
+          unzip -q chromedriver.zip
+          chmod +x chromedriver-linux64/chromedriver
+          sudo mv chromedriver-linux64/chromedriver /usr/local/bin/chromedriver
+
+          # Exportar paths como variables de entorno
+          echo "CHROME_BIN=${{ steps.setup-chrome.outputs.chrome-path }}" >> $GITHUB_ENV
+          echo "CHROMEDRIVER_BIN=/usr/local/bin/chromedriver" >> $GITHUB_ENV
+
+      # 5. Verificar versiones
+      - name: Verificar Chrome y ChromeDriver
+        run: |
+          echo "Chrome: $($CHROME_BIN --version)"
+          echo "ChromeDriver: $($CHROMEDRIVER_BIN --version)"
+
+      # 6. Ejecutar pruebas Serenity con Xvfb
+      - name: Ejecutar pruebas Serenity
+        run: |
+          xvfb-run --auto-servernum --server-args='-screen 0 1920x1080x24' \
+          mvn clean verify \
+            -Dwebdriver.driver=chrome \
+            -Dwebdriver.chrome.driver="$CHROMEDRIVER_BIN" \
+            -Dwebdriver.chrome.binary="$CHROME_BIN" \
+            -Dchrome.switches="--headless=new,--no-sandbox,--disable-dev-shm-usage,--disable-gpu,--window-size=1920,1080" \
+            -Dserenity.outputDirectory=target/site/serenity \
+            -e
+
+      # 6.1. Imprimir errores de failsafe directamente en el log
+      - name: Imprimir errores de failsafe
+        if: failure()
+        run: |
+          echo "===== FAILSAFE REPORTS ====="
+          find target/failsafe-reports -name "*.txt" 2>/dev/null | xargs -I {} sh -c 'echo "--- {} ---"; cat {}'
+
+      # 6.2. Guardar reportes de fallos Maven como artefacto
+      - name: Guardar failsafe-reports
+        if: failure()
         uses: actions/upload-artifact@v4
-        if: always() # Usar 'always()' asegura que el reporte se suba, sea exitoso o no el build.
         with:
-          name: serenity-report
-          path: target/site/serenity/ # Ruta donde se encuentra el reporte consolidado
+          name: failsafe-reports
+          path: target/failsafe-reports/
+          if-no-files-found: warn
+
+      # 7. Regenerar reporte Serenity
+      - name: Regenerar reporte Serenity
+        if: success() || failure()
+        run: mvn serenity:aggregate
+
+      # 8. Verificar contenido del reporte
+      - name: Verificar contenido del reporte
+        if: success() || failure()
+        run: ls -l target/site/serenity
+
+      # 9. Guardar reporte como artefacto
+      - name: Guardar reporte Serenity como artefacto
+        if: success() || failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reporte-serenity
+          path: target/site/serenity
+          if-no-files-found: warn
+
+      # 10. Publicar en GitHub Pages
+      - name: Publicar reporte en GitHub Pages
+        if: success() || failure()
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: target/site/serenity
+
+
+#Para que este workflow funcione para cualquier proyecto sin cambios se debe usar Maven, tener el plugin maven-failsafe-plugin configurado en el pom.xml, y usar Serenity BDD con el output en target/site/serenity.
