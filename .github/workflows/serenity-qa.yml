@@ -37,16 +37,14 @@ jobs:
         with:
           chrome-version: stable
 
-      # 4. Instalar ChromeDriver de la misma version que Chrome
+      # 4. Instalar ChromeDriver compatible
       - name: Instalar ChromeDriver compatible
         run: |
           sudo apt-get install -y xvfb
 
-          # Obtener version exacta de Chrome instalado
           CHROME_VERSION=$("${{ steps.setup-chrome.outputs.chrome-path }}" --version | grep -oP '\d+\.\d+\.\d+\.\d+')
           echo "Chrome version detectada: $CHROME_VERSION"
 
-          # Descargar ChromeDriver de la misma version
           CHROMEDRIVER_URL="https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chromedriver-linux64.zip"
           echo "Descargando ChromeDriver desde: $CHROMEDRIVER_URL"
 
@@ -55,7 +53,6 @@ jobs:
           chmod +x chromedriver-linux64/chromedriver
           sudo mv chromedriver-linux64/chromedriver /usr/local/bin/chromedriver
 
-          # Exportar paths como variables de entorno
           echo "CHROME_BIN=${{ steps.setup-chrome.outputs.chrome-path }}" >> $GITHUB_ENV
           echo "CHROMEDRIVER_BIN=/usr/local/bin/chromedriver" >> $GITHUB_ENV
 
@@ -65,7 +62,7 @@ jobs:
           echo "Chrome: $($CHROME_BIN --version)"
           echo "ChromeDriver: $($CHROMEDRIVER_BIN --version)"
 
-      # 6. Ejecutar pruebas Serenity con Xvfb
+      # 6. Ejecutar pruebas Serenity
       - name: Ejecutar pruebas Serenity
         run: |
           xvfb-run --auto-servernum --server-args='-screen 0 1920x1080x24' \
@@ -77,14 +74,14 @@ jobs:
             -Dserenity.outputDirectory=target/site/serenity \
             -e
 
-      # 6.1. Imprimir errores de failsafe directamente en el log
+      # 6.1 Mostrar errores si hay fallos
       - name: Imprimir errores de failsafe
         if: failure()
         run: |
           echo "===== FAILSAFE REPORTS ====="
           find target/failsafe-reports -name "*.txt" 2>/dev/null | xargs -I {} sh -c 'echo "--- {} ---"; cat {}'
 
-      # 6.2. Guardar reportes de fallos Maven como artefacto
+      # 6.2 Guardar failsafe reports
       - name: Guardar failsafe-reports
         if: failure()
         uses: actions/upload-artifact@v4
@@ -121,5 +118,40 @@ jobs:
           publish_branch: gh-pages
           publish_dir: target/site/serenity
 
+      # 11. Mostrar link del reporte (PRO)
+      - name: Mostrar link del reporte
+        if: always()
+        run: |
+          echo "-----------------------------------"
+          echo "SERENITY REPORT:"
+          echo "https://jonathancastro-qa.github.io/DemoQAFormScreenplay/"
+          echo "-----------------------------------"
 
-#Para que este workflow funcione para cualquier proyecto sin cambios se debe usar Maven, tener el plugin maven-failsafe-plugin configurado en el pom.xml, y usar Serenity BDD con el output en target/site/serenity.
+      # 12. Job Summary en GitHub (PRO)
+      - name: Crear resumen del Job
+        if: always()
+        run: |
+          echo "## 🧪 Serenity Automation Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Repositorio: DemoQAFormScreenplay" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "🔗 Reporte:" >> $GITHUB_STEP_SUMMARY
+          echo "https://jonathancastro-qa.github.io/DemoQAFormScreenplay/" >> $GITHUB_STEP_SUMMARY
+
+      # 13. Comentario automático en PR (PRO)
+      - name: Comentar reporte en Pull Request
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 🧪 Automation Test Report
+
+Serenity Report:
+  https://jonathancastro-qa.github.io/DemoQAFormScreenplay/
+  
+  Pipeline ejecutado correctamente.`
+  })
