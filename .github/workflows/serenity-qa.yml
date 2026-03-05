@@ -118,7 +118,7 @@ jobs:
           publish_branch: gh-pages
           publish_dir: target/site/serenity
 
-      # 11. Mostrar link del reporte (PRO)
+      # 11. Mostrar link del reporte en logs
       - name: Mostrar link del reporte
         if: always()
         run: |
@@ -127,7 +127,7 @@ jobs:
           echo "https://jonathancastro-qa.github.io/DemoQAFormScreenplay/"
           echo "-----------------------------------"
 
-      # 12. Job Summary en GitHub (PRO)
+      # 12. Crear Job Summary en GitHub
       - name: Crear resumen del Job
         if: always()
         run: |
@@ -138,20 +138,23 @@ jobs:
           echo "🔗 Reporte:" >> $GITHUB_STEP_SUMMARY
           echo "https://jonathancastro-qa.github.io/DemoQAFormScreenplay/" >> $GITHUB_STEP_SUMMARY
 
-      # 13. Comentario automático en PR (PRO)
+      # 13. Comentario automático en Pull Request
       - name: Comentar reporte en Pull Request
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
+            const body = `
+            🧪 Automation Test Report
+
+            Serenity Report:
+            https://jonathancastro-qa.github.io/DemoQAFormScreenplay/
+
+            Pipeline ejecutado correctamente.
+            `;
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `## 🧪 Automation Test Report
-
-Serenity Report:
-  https://jonathancastro-qa.github.io/DemoQAFormScreenplay/
-  
-  Pipeline ejecutado correctamente.`
-  })
+              body: body
+            });
